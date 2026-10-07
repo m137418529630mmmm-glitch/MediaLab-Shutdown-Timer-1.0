@@ -16,39 +16,37 @@ jobs:
 
     steps:
 
-      # =====================================================
-      # 1. Download repository
-      # =====================================================
+      # =========================================================
+      # 1. Checkout repository
+      # =========================================================
       - name: Checkout repository
         uses: actions/checkout@v4
 
 
-      # =====================================================
+      # =========================================================
       # 2. Setup Node.js
-      # =====================================================
+      # =========================================================
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 22
 
 
-      # =====================================================
+      # =========================================================
       # 3. Setup Rust
-      # =====================================================
+      # =========================================================
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: x86_64-pc-windows-msvc
 
 
-      # =====================================================
-      # 4. Find the new ZIP
-      # =====================================================
+      # =========================================================
+      # 4. Find project ZIP
+      # =========================================================
       - name: Find project ZIP
         shell: pwsh
         run: |
-          Write-Host "Searching for PowerTimer project ZIP..."
-
           $zip = Get-ChildItem `
             -Path "$env:GITHUB_WORKSPACE" `
             -Filter "PowerTimer-Pro-Medialab-With-Icon.zip" `
@@ -57,8 +55,7 @@ jobs:
             Select-Object -First 1
 
           if (-not $zip) {
-            Write-Host "PowerTimer-Pro-Medialab-With-Icon.zip was not found." -ForegroundColor Red
-
+            Write-Host "Project ZIP not found." -ForegroundColor Red
             Write-Host ""
             Write-Host "ZIP files found:"
 
@@ -74,15 +71,15 @@ jobs:
             exit 1
           }
 
-          Write-Host "Found:"
+          Write-Host "Using project:"
           Write-Host $zip.FullName
 
           "PROJECT_ZIP=$($zip.FullName)" >> $env:GITHUB_ENV
 
 
-      # =====================================================
+      # =========================================================
       # 5. Extract project
-      # =====================================================
+      # =========================================================
       - name: Extract project
         shell: pwsh
         run: |
@@ -94,7 +91,8 @@ jobs:
 
           New-Item `
             -ItemType Directory `
-            -Path $projectPath |
+            -Path $projectPath `
+            -Force |
             Out-Null
 
           Expand-Archive `
@@ -102,20 +100,20 @@ jobs:
             -DestinationPath $projectPath `
             -Force
 
+          "PROJECT_ROOT=$projectPath" >> $env:GITHUB_ENV
+
           Write-Host "Project extracted to:"
           Write-Host $projectPath
 
-          "PROJECT_ROOT=$projectPath" >> $env:GITHUB_ENV
 
-
-      # =====================================================
+      # =========================================================
       # 6. Verify original project
-      # =====================================================
+      # =========================================================
       - name: Verify project
         shell: pwsh
         working-directory: ${{ env.PROJECT_ROOT }}
         run: |
-          $required = @(
+          $requiredFiles = @(
             "package.json",
             "src/App.tsx",
             "src/main.tsx",
@@ -125,7 +123,7 @@ jobs:
             "src-tauri/icons/icon.ico"
           )
 
-          foreach ($file in $required) {
+          foreach ($file in $requiredFiles) {
 
             if (-not (Test-Path $file)) {
               Write-Host "MISSING: $file" -ForegroundColor Red
@@ -136,12 +134,12 @@ jobs:
           }
 
           Write-Host ""
-          Write-Host "Original project verified successfully."
+          Write-Host "Project verification completed." -ForegroundColor Green
 
 
-      # =====================================================
+      # =========================================================
       # 7. Install npm dependencies
-      # =====================================================
+      # =========================================================
       - name: Install npm dependencies
         shell: pwsh
         working-directory: ${{ env.PROJECT_ROOT }}
@@ -149,393 +147,315 @@ jobs:
           npm install --legacy-peer-deps
 
 
-      # =====================================================
-      # 8. Install Tauri
-      # =====================================================
-      - name: Install Tauri packages
+      # =========================================================
+      # 8. Install Tauri CLI and API
+      # =========================================================
+      - name: Install Tauri
         shell: pwsh
         working-directory: ${{ env.PROJECT_ROOT }}
         run: |
-          npm install `
-            --save-dev `
-            @tauri-apps/cli@2 `
-            --legacy-peer-deps
-
-          npm install `
-            @tauri-apps/api@2 `
-            --legacy-peer-deps
+          npm install --save-dev @tauri-apps/cli@2 --legacy-peer-deps
+          npm install @tauri-apps/api@2 --legacy-peer-deps
 
 
-      # =====================================================
-      # 9. Create Tauri folders
-      # =====================================================
-      - name: Create Tauri structure
+      # =========================================================
+      # 9. Create Tauri directories
+      # =========================================================
+      - name: Create Tauri directories
         shell: pwsh
         working-directory: ${{ env.PROJECT_ROOT }}
         run: |
           New-Item `
             -ItemType Directory `
-            -Force `
-            -Path "src-tauri/src" |
+            -Path "src-tauri/src" `
+            -Force |
             Out-Null
 
           New-Item `
             -ItemType Directory `
-            -Force `
-            -Path "src-tauri/icons" |
+            -Path "src-tauri/icons" `
+            -Force |
             Out-Null
 
 
-      # =====================================================
+      # =========================================================
       # 10. Create Cargo.toml
-      # =====================================================
+      # =========================================================
       - name: Create Cargo.toml
         shell: pwsh
         working-directory: ${{ env.PROJECT_ROOT }}
         run: |
-          @'
-          [package]
-          name = "medialab-shutdown-timer"
-          version = "1.0.0"
-          description = "Medialab Shutdown Timer"
-          authors = ["MediaLab"]
-          edition = "2021"
+          $lines = @(
+            '[package]'
+            'name = "medialab-shutdown-timer"'
+            'version = "1.0.0"'
+            'description = "Medialab Shutdown Timer"'
+            'authors = ["MediaLab"]'
+            'edition = "2021"'
+            ''
+            '[lib]'
+            'name = "medialab_shutdown_timer_lib"'
+            'crate-type = ["staticlib", "cdylib", "rlib"]'
+            ''
+            '[build-dependencies]'
+            'tauri-build = { version = "2", features = [] }'
+            ''
+            '[dependencies]'
+            'tauri = { version = "2", features = [] }'
+            'serde = { version = "1", features = ["derive"] }'
+            'serde_json = "1"'
+          )
 
-          [lib]
-          name = "medialab_shutdown_timer_lib"
-          crate-type = ["staticlib", "cdylib", "rlib"]
-
-          [build-dependencies]
-          tauri-build = { version = "2", features = [] }
-
-          [dependencies]
-          tauri = { version = "2", features = [] }
-          serde = { version = "1", features = ["derive"] }
-          serde_json = "1"
-          '@ | Set-Content `
+          Set-Content `
             -Path "src-tauri/Cargo.toml" `
+            -Value ($lines -join "`r`n") `
             -Encoding UTF8
 
 
-      # =====================================================
+      # =========================================================
       # 11. Create build.rs
-      # =====================================================
+      # =========================================================
       - name: Create build.rs
         shell: pwsh
         working-directory: ${{ env.PROJECT_ROOT }}
         run: |
-          @'
-          fn main() {
-              tauri_build::build()
-          }
-          '@ | Set-Content `
+          $lines = @(
+            'fn main() {'
+            '    tauri_build::build()'
+            '}'
+          )
+
+          Set-Content `
             -Path "src-tauri/build.rs" `
+            -Value ($lines -join "`r`n") `
             -Encoding UTF8
 
 
-      # =====================================================
+      # =========================================================
       # 12. Create Rust backend
-      # =====================================================
+      # =========================================================
       - name: Create Rust backend
         shell: pwsh
         working-directory: ${{ env.PROJECT_ROOT }}
         run: |
+          $lines = @(
+            '#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]'
+            ''
+            'use std::process::Command;'
+            ''
+            '#[tauri::command]'
+            'fn execute_action(action: String, force: bool) -> Result<(), String> {'
+            '    match action.as_str() {'
+            ''
+            '        "shutdown" => {'
+            '            let mut command = Command::new("shutdown.exe");'
+            '            command.args(["/s", "/t", "0"]);'
+            ''
+            '            if force {'
+            '                command.arg("/f");'
+            '            }'
+            ''
+            '            command.spawn().map_err(|e| format!("Shutdown failed: {}", e))?;'
+            '        }'
+            ''
+            '        "restart" => {'
+            '            let mut command = Command::new("shutdown.exe");'
+            '            command.args(["/r", "/t", "0"]);'
+            ''
+            '            if force {'
+            '                command.arg("/f");'
+            '            }'
+            ''
+            '            command.spawn().map_err(|e| format!("Restart failed: {}", e))?;'
+            '        }'
+            ''
+            '        "lock" => {'
+            '            Command::new("rundll32.exe")'
+            '                .arg("user32.dll,LockWorkStation")'
+            '                .spawn()'
+            '                .map_err(|e| format!("Lock failed: {}", e))?;'
+            '        }'
+            ''
+            '        "sleep" => {'
+            '            Command::new("rundll32.exe")'
+            '                .args(["powrprof.dll,SetSuspendState", "0,1,0"])'
+            '                .spawn()'
+            '                .map_err(|e| format!("Sleep failed: {}", e))?;'
+            '        }'
+            ''
+            '        _ => {'
+            '            return Err(format!("Unknown action: {}", action));'
+            '        }'
+            '    }'
+            ''
+            '    Ok(())'
+            '}'
+            ''
+            '#[cfg_attr(mobile, tauri::mobile_entry_point)]'
+            'pub fn run() {'
+            '    tauri::Builder::default()'
+            '        .invoke_handler(tauri::generate_handler![execute_action])'
+            '        .run(tauri::generate_context!())'
+            '        .expect("error while running Medialab Shutdown Timer");'
+            '}'
+          )
 
-          @'
-          #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
-
-          use std::process::Command;
-
-          #[tauri::command]
-          fn execute_action(
-              action: String,
-              force: bool
-          ) -> Result<(), String> {
-
-              match action.as_str() {
-
-                  "shutdown" => {
-
-                      let mut command = Command::new("shutdown.exe");
-
-                      command.args(["/s", "/t", "0"]);
-
-                      if force {
-                          command.arg("/f");
-                      }
-
-                      command
-                          .spawn()
-                          .map_err(|e| {
-                              format!("Shutdown failed: {}", e)
-                          })?;
-                  }
-
-                  "restart" => {
-
-                      let mut command = Command::new("shutdown.exe");
-
-                      command.args(["/r", "/t", "0"]);
-
-                      if force {
-                          command.arg("/f");
-                      }
-
-                      command
-                          .spawn()
-                          .map_err(|e| {
-                              format!("Restart failed: {}", e)
-                          })?;
-                  }
-
-                  "lock" => {
-
-                      Command::new("rundll32.exe")
-                          .arg("user32.dll,LockWorkStation")
-                          .spawn()
-                          .map_err(|e| {
-                              format!("Lock failed: {}", e)
-                          })?;
-                  }
-
-                  "sleep" => {
-
-                      Command::new("rundll32.exe")
-                          .args([
-                              "powrprof.dll,SetSuspendState",
-                              "0,1,0"
-                          ])
-                          .spawn()
-                          .map_err(|e| {
-                              format!("Sleep failed: {}", e)
-                          })?;
-                  }
-
-                  _ => {
-                      return Err(
-                          format!(
-                              "Unknown action: {}",
-                              action
-                          )
-                      );
-                  }
-              }
-
-              Ok(())
-          }
-
-          #[cfg_attr(mobile, tauri::mobile_entry_point)]
-          pub fn run() {
-
-              tauri::Builder::default()
-
-                  .invoke_handler(
-                      tauri::generate_handler![
-                          execute_action
-                      ]
-                  )
-
-                  .run(
-                      tauri::generate_context!()
-                  )
-
-                  .expect(
-                      "error while running Medialab Shutdown Timer"
-                  );
-          }
-          '@ | Set-Content `
+          Set-Content `
             -Path "src-tauri/src/lib.rs" `
+            -Value ($lines -join "`r`n") `
             -Encoding UTF8
 
+          $main = @(
+            'fn main() {'
+            '    medialab_shutdown_timer_lib::run();'
+            '}'
+          )
 
-          @'
-          fn main() {
-              medialab_shutdown_timer_lib::run();
-          }
-          '@ | Set-Content `
+          Set-Content `
             -Path "src-tauri/src/main.rs" `
+            -Value ($main -join "`r`n") `
             -Encoding UTF8
 
 
-      # =====================================================
+      # =========================================================
       # 13. Create Tauri configuration
-      # =====================================================
+      # =========================================================
       - name: Create tauri.conf.json
         shell: pwsh
         working-directory: ${{ env.PROJECT_ROOT }}
         run: |
+          $config = @'
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Medialab-Shutdown Timer",
+  "version": "1.0.0",
+  "identifier": "com.medialab.shutdown.timer",
 
-          @'
-          {
-            "$schema": "https://schema.tauri.app/config/2",
+  "build": {
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
 
-            "productName": "Medialab-Shutdown Timer",
+  "app": {
+    "windows": [
+      {
+        "title": "Medialab-Shutdown Timer",
+        "width": 560,
+        "height": 720,
+        "minWidth": 480,
+        "minHeight": 600,
+        "resizable": true
+      }
+    ],
 
-            "version": "1.0.0",
+    "security": {
+      "csp": null
+    }
+  },
 
-            "identifier": "com.medialab.shutdown.timer",
+  "bundle": {
+    "active": true,
+    "targets": [
+      "nsis",
+      "msi"
+    ],
+    "icon": [
+      "icons/icon.ico"
+    ],
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser"
+      }
+    }
+  }
+}
+'@
 
-            "build": {
-              "beforeBuildCommand": "npm run build",
-              "frontendDist": "../dist"
-            },
-
-            "app": {
-
-              "windows": [
-                {
-                  "title": "Medialab-Shutdown Timer",
-                  "width": 560,
-                  "height": 720,
-                  "minWidth": 480,
-                  "minHeight": 600,
-                  "resizable": true
-                }
-              ],
-
-              "security": {
-                "csp": null
-              }
-            },
-
-            "bundle": {
-
-              "active": true,
-
-              "targets": [
-                "nsis",
-                "msi"
-              ],
-
-              "icon": [
-                "icons/icon.ico"
-              ],
-
-              "windows": {
-                "nsis": {
-                  "installMode": "currentUser"
-                }
-              }
-            }
-          }
-          '@ | Set-Content `
+          Set-Content `
             -Path "src-tauri/tauri.conf.json" `
+            -Value $config `
             -Encoding UTF8
 
 
-      # =====================================================
-      # 14. Create native.ts
-      # =====================================================
+      # =========================================================
+      # 14. Create native API
+      # =========================================================
       - name: Create native API
         shell: pwsh
         working-directory: ${{ env.PROJECT_ROOT }}
         run: |
+          $lines = @(
+            "import { invoke } from '@tauri-apps/api/core';"
+            ""
+            "export type NativeAction = 'shutdown' | 'restart' | 'lock' | 'sleep';"
+            ""
+            "export async function executeNativeAction(action: NativeAction, force: boolean = true): Promise<void> {"
+            "  await invoke('execute_action', { action, force });"
+            "}"
+          )
 
-          @'
-          import { invoke } from '@tauri-apps/api/core';
+          New-Item `
+            -ItemType Directory `
+            -Path "src/utils" `
+            -Force |
+            Out-Null
 
-          export type NativeAction =
-            | 'shutdown'
-            | 'restart'
-            | 'lock'
-            | 'sleep';
-
-          export async function executeNativeAction(
-            action: NativeAction,
-            force: boolean = true
-          ): Promise<void> {
-
-            await invoke(
-              'execute_action',
-              {
-                action,
-                force
-              }
-            );
-          }
-          '@ | Set-Content `
+          Set-Content `
             -Path "src/utils/native.ts" `
+            -Value ($lines -join "`r`n") `
             -Encoding UTF8
 
 
-      # =====================================================
-      # 15. Connect timer to native Windows action
-      # =====================================================
+      # =========================================================
+      # 15. Connect timer with Windows action
+      # =========================================================
       - name: Connect timer
         shell: pwsh
         working-directory: ${{ env.PROJECT_ROOT }}
         run: |
-
           $file = "src/App.tsx"
+          $content = Get-Content $file -Raw
 
-          $content = Get-Content `
-            $file `
-            -Raw
+          $import = "import { executeNativeAction } from './utils/native';"
 
-          # Add native import
-          if ($content -notmatch "executeNativeAction") {
-
+          if ($content -notmatch "from './utils/native'") {
             $content = $content.Replace(
-              "import { MediaLabLogo } from './components/MediaLabLogo';",
-              "import { MediaLabLogo } from './components/MediaLabLogo';`r`nimport { executeNativeAction } from './utils/native';"
+              "import React, { useState, useEffect, useRef } from 'react';",
+              "import React, { useState, useEffect, useRef } from 'react';`r`n$import"
             )
           }
 
+          if ($content -notmatch "executeNativeAction\(actionType") {
 
-          # Add native action when timer reaches zero
-          $oldBlock = @"
-            clearInterval(timerRef.current!);
-            setIsRunning(false);
-            sounds.playAlarm();
-            setIsLockScreenActive(true);
-            return 0;
-"@
-
-          $newBlock = @"
-            clearInterval(timerRef.current!);
-            setIsRunning(false);
-            sounds.playAlarm();
-            setIsLockScreenActive(true);
-
-            executeNativeAction(actionType, forceKill).catch((error) => {
-              console.error('Native Windows action failed:', error);
-            });
-
-            return 0;
-"@
-
-          if ($content.Contains($oldBlock)) {
+            $replacement = @(
+              "setIsLockScreenActive(true);"
+              ""
+              "            executeNativeAction(actionType, forceKill).catch((error) => {"
+              "              console.error('Native Windows action failed:', error);"
+              "            });"
+            ) -join "`r`n"
 
             $content = $content.Replace(
-              $oldBlock,
-              $newBlock
+              "setIsLockScreenActive(true);",
+              $replacement
             )
-
-            Write-Host "Timer native action connected successfully." -ForegroundColor Green
-
           }
-          else {
-
-            Write-Host "Timer block was not found." -ForegroundColor Yellow
-            Write-Host "The build will continue, but native execution may not be connected."
-
-          }
-
 
           Set-Content `
             -Path $file `
             -Value $content `
             -Encoding UTF8
 
+          Write-Host "App.tsx connected to native Windows actions."
 
-      # =====================================================
-      # 16. Verify final files
-      # =====================================================
+
+      # =========================================================
+      # 16. Verify Tauri project
+      # =========================================================
       - name: Verify Tauri project
         shell: pwsh
         working-directory: ${{ env.PROJECT_ROOT }}
         run: |
-
           $required = @(
             "package.json",
             "src/App.tsx",
@@ -550,12 +470,8 @@ jobs:
           )
 
           foreach ($file in $required) {
-
             if (-not (Test-Path $file)) {
-
-              Write-Host ""
               Write-Host "MISSING: $file" -ForegroundColor Red
-
               exit 1
             }
 
@@ -563,9 +479,9 @@ jobs:
           }
 
 
-      # =====================================================
-      # 17. Build React/Vite
-      # =====================================================
+      # =========================================================
+      # 17. Build frontend
+      # =========================================================
       - name: Build frontend
         shell: pwsh
         working-directory: ${{ env.PROJECT_ROOT }}
@@ -573,9 +489,9 @@ jobs:
           npm run build
 
 
-      # =====================================================
+      # =========================================================
       # 18. Build Tauri
-      # =====================================================
+      # =========================================================
       - name: Build Tauri Windows
         shell: pwsh
         working-directory: ${{ env.PROJECT_ROOT }}
@@ -583,14 +499,13 @@ jobs:
           npm exec tauri build
 
 
-      # =====================================================
-      # 19. Check EXE
-      # =====================================================
+      # =========================================================
+      # 19. Verify EXE
+      # =========================================================
       - name: Verify EXE
         shell: pwsh
         working-directory: ${{ env.PROJECT_ROOT }}
         run: |
-
           $exe = Get-ChildItem `
             "src-tauri/target/release/bundle/nsis" `
             -Filter "*.exe" `
@@ -598,13 +513,10 @@ jobs:
             -ErrorAction SilentlyContinue
 
           if (-not $exe) {
-
-            Write-Host "EXE was not generated." -ForegroundColor Red
-
+            Write-Host "NSIS EXE was not generated." -ForegroundColor Red
             exit 1
           }
 
-          Write-Host ""
           Write-Host "EXE generated successfully:" -ForegroundColor Green
 
           $exe | ForEach-Object {
@@ -612,14 +524,13 @@ jobs:
           }
 
 
-      # =====================================================
-      # 20. Check MSI
-      # =====================================================
+      # =========================================================
+      # 20. Verify MSI
+      # =========================================================
       - name: Verify MSI
         shell: pwsh
         working-directory: ${{ env.PROJECT_ROOT }}
         run: |
-
           $msi = Get-ChildItem `
             "src-tauri/target/release/bundle/msi" `
             -Filter "*.msi" `
@@ -627,13 +538,10 @@ jobs:
             -ErrorAction SilentlyContinue
 
           if (-not $msi) {
-
             Write-Host "MSI was not generated." -ForegroundColor Red
-
             exit 1
           }
 
-          Write-Host ""
           Write-Host "MSI generated successfully:" -ForegroundColor Green
 
           $msi | ForEach-Object {
@@ -641,9 +549,9 @@ jobs:
           }
 
 
-      # =====================================================
+      # =========================================================
       # 21. Upload installers
-      # =====================================================
+      # =========================================================
       - name: Upload Windows installers
         uses: actions/upload-artifact@v4
         with:
